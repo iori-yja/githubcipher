@@ -1,4 +1,4 @@
-{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE OverloadedStrings, PackageImports #-}
 import System.Environment
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Base64 as B64
@@ -11,12 +11,13 @@ import Data.Aeson.Types
 import Data.Aeson.Lens
 import Data.Word
 import Data.List
-import Crypto.Random
+import "crypto-random" Crypto.Random
 import qualified Crypto.Random.AESCtr as RA
 import Crypto.Cipher.AES
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
 import qualified Data.Vector as V
+import qualified Codec.Crypto.RSA as RSA
 
 listKeys :: Response B.ByteString -> Maybe (V.Vector T.Text)
 listKeys r
@@ -37,25 +38,42 @@ getKeys username = putStrLn ("Connecting to " ++ gurl username ++ "...") >>
     dum Nothing  = V.empty
     dum (Just a) = a
 
-decodePubKey :: T.Text -> ((Int, Int), [Word8], [Word8])
+-- ((nsz, esz), e, n)
+decodePubKey :: T.Text -> ((Int, Int), Int, Integer)
 decodePubKey text = let Right key =  keybin text
-                        algosz = getKeysize $ BS.take 4 key
+                        algosz = bytesToInt $ BS.take 4 key
                         algo = (BS.take algosz . BS.drop 4) key
                         take4from i = BS.take 4 . BS.drop i $ key
-                        esize = getKeysize $ take4from (algosz + 4)
-                        nsize = getKeysize $ take4from (esize + algosz + 8)
+                        esize = bytesToInt $ take4from (algosz + 4)
+                        nsize = bytesToInt $ take4from (esize + algosz + 4 + 4)
+                        get_e = BS.take esize . BS.drop (4 + algosz + 4)
+                        get_n = BS.take nsize . BS.drop (4 + algosz + 4 + esize + 4)
                         in
-                        ((nsize, esize), BS.unpack $ take4from (algosz + 4), BS.unpack key)
+                        ((nsize, esize), bytesToInt $ get_e key, bytesToInteger $ get_n key)
                         where
-                            getKeysize :: BS.ByteString -> Int
-                            getKeysize = (foldl' (\z n -> (z * 256) + fromIntegral n) 0) . BS.unpack
+                            bytesToInt :: BS.ByteString -> Int
+                            bytesToInt = (foldl' (\z n -> (z * 256) + fromIntegral n) 0) . BS.unpack
+                            bytesToInteger :: BS.ByteString -> Integer
+                            bytesToInteger = (foldl' (\z n -> (z * 256) + fromIntegral n) 0) . BS.unpack
                             keybin = B64.decode . TE.encodeUtf8 . head . tail . (T.splitOn $ T.pack " ")
 
+encryptFile :: IO (AESIV, RA.AESRNG) -> IO AES -> IO (BS.ByteString -> BS.ByteString)
+encryptFile iv cc = fmap runencrypt cc <*> fmap fst iv
+    where
+    runencrypt c iv = encryptCBC c iv
+
 main :: IO()
-main = do (username:targetfile:_) <- getArgs
-          fmap (V.map decodePubKey) (getKeys username) >>= (writeFile (targetfile ++ ".enc")) . show
-          where
-          initVec = (over _1 aesIV_ . cprgGenerate 128) <$> RA.makeSystem
-          ciphercontext = initAES . fst <$> (cprgGenerate (32 * 8) . snd) <$> initVec
-          runencrypt c iv = encryptCBC c iv
+main = do
+    sfname' <- sfname
+    fmap (V.map decodePubKey) (getKeys =<< username) >>= kwriter sfname' . show >>
+        encryptFile initVec' ciphercontext <*> sourcefile >>= bwriter sfname'
+    where
+    initVec = cprgGenerate 16 <$> RA.makeSystem
+    initVec' = over _1 aesIV_ initVec
+    ciphercontext = initAES . fst <$> (cprgGenerate 32 . snd) <$> initVec
+    username = head <$> getArgs
+    sfname = (head . tail) <$> getArgs
+    sourcefile = BS.readFile =<< sfname
+    bwriter fname = BS.writeFile (fname ++ ".enc")
+    kwriter fname = writeFile (fname ++ ".key")
 
