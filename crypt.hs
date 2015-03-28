@@ -57,24 +57,24 @@ decodePubKey text = let Right key =  keybin text
                             bytesToInteger = (foldl' (\z n -> (z * 256) + fromIntegral n) 0) . BS.unpack
                             keybin = B64.decode . TE.encodeUtf8 . head . tail . (T.splitOn $ T.pack " ")
 
-encryptFile :: IO (AESIV, RA.AESRNG) -> IO AES -> IO (BS.ByteString -> BS.ByteString)
-encryptFile iv cc = fmap runencrypt cc <*> fmap fst iv
+encryptFile :: IO (BS.ByteString, RA.AESRNG) -> IO BS.ByteString -> IO (BS.ByteString -> BS.ByteString)
+encryptFile iv cc = fmap (runencrypt . initAES) cc <*> fmap (aesIV_ . fst) iv
     where
-    runencrypt c iv = encryptCBC c iv
+    runencrypt c iv = encryptCTR c iv
 
 main :: IO()
 main = do
     sfname' <- sfname
     fmap (V.map decodePubKey) (getKeys =<< username) >>=
-        V.mapM (\k -> encryptKey k $ (fst initVec, fst ciphercontext)) >>=
+        V.mapM (\k -> encryptKey k $ (fmap fst initVec, ciphercontext)) >>=
             kwriter sfname' . show >>
-                encryptFile initVec ciphercontext <*> sourcefile >>= bwriter sfname'
+                encryptFile initVec ciphercontext <*> sourcedata >>= bwriter sfname'
     where
-    initVec = (over _1 aesIV_ . cprgGenerate 16) <$> RA.makeSystem
-    ciphercontext = initAES . fst <$> (cprgGenerate 32 . snd) <$> initVec
+    initVec = cprgGenerate 16 <$> RA.makeSystem
+    ciphercontext = fst <$> (cprgGenerate 32 . snd) <$> initVec
     username = head <$> getArgs
     sfname = (head . tail) <$> getArgs
-    sourcefile = BS.readFile =<< sfname
+    sourcedata = BS.readFile =<< sfname
     bwriter fname = BS.writeFile (fname ++ ".enc")
     kwriter fname = writeFile (fname ++ ".key")
 
