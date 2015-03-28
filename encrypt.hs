@@ -66,7 +66,7 @@ main :: IO()
 main = do
     sfname' <- sfname
     fmap (V.map decodePubKey) (getKeys =<< username) >>=
-        V.mapM (\k -> encryptKey k $ (fmap fst initVec, ciphercontext)) >>=
+        V.mapM (encryptKey (fmap fst initVec, ciphercontext)) >>=
             kwriter sfname' . show >>
                 encryptFile initVec ciphercontext <*> sourcedata >>= bwriter sfname'
     where

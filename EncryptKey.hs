@@ -20,8 +20,8 @@ encryptBS pk (iv,k) = do g <- CR.newGenIO :: IO CR.SystemRandom
                              kenc = encer (snd ivenc) (B.fromStrict k')
                              in return (B.append (fst ivenc) (fst kenc))
 
-encryptKey :: ((Int, Int), Integer, Integer)
-                -> (IO BS.ByteString, IO BS.ByteString)
+encryptKey :: (IO BS.ByteString, IO BS.ByteString)
+                ->((Int, Int), Integer, Integer)
                 -> IO B.ByteString
-encryptKey k a = encryptBS (makePubKey k) a
+encryptKey a k = encryptBS (makePubKey k) a
 
