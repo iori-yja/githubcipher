@@ -12,13 +12,31 @@ import Data.Aeson.Lens
 import Data.Word
 import Data.List
 import "crypto-random" Crypto.Random
+import qualified "crypto-api" Crypto.Random as CR
 import qualified Crypto.Random.AESCtr as RA
 import Crypto.Cipher.AES
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
 import qualified Data.Vector as V
-import qualified Crypto.PubKey.RSA.PKCS15 as RSA
-import EncryptKey
+import qualified Codec.Crypto.RSA as RSA
+
+makePubKey :: ((Int, Int), Integer, Integer) -> RSA.PublicKey
+makePubKey ((nsz, _), e, n) = RSA.PublicKey (nsz - 1) n e
+
+encryptBS :: RSA.PublicKey -> (IO BS.ByteString, IO BS.ByteString) -> IO B.ByteString
+encryptBS pk (iv,k) = do g <- CR.newGenIO :: IO CR.SystemRandom
+                         iv' <- iv
+                         k' <- k
+                         let encer gen = RSA.encrypt g pk
+                             ivenc = encer g (B.fromStrict iv')
+                             kenc = encer (snd ivenc) (B.fromStrict k')
+                             in return (B.append (fst ivenc) (fst kenc))
+
+encryptKey :: (IO BS.ByteString, IO BS.ByteString)
+                ->((Int, Int), Integer, Integer)
+                -> IO B.ByteString
+encryptKey a k = encryptBS (makePubKey k) a
+
 
 listKeys :: Response B.ByteString -> Maybe (V.Vector T.Text)
 listKeys r
