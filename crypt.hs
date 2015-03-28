@@ -17,7 +17,8 @@ import Crypto.Cipher.AES
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
 import qualified Data.Vector as V
-import qualified Codec.Crypto.RSA as RSA
+import qualified Crypto.PubKey.RSA.PKCS15 as RSA
+import EncryptKey
 
 listKeys :: Response B.ByteString -> Maybe (V.Vector T.Text)
 listKeys r
@@ -38,8 +39,7 @@ getKeys username = putStrLn ("Connecting to " ++ gurl username ++ "...") >>
     dum Nothing  = V.empty
     dum (Just a) = a
 
--- ((nsz, esz), e, n)
-decodePubKey :: T.Text -> ((Int, Int), Int, Integer)
+decodePubKey :: T.Text -> ((Int, Int), Integer, Integer)
 decodePubKey text = let Right key =  keybin text
                         algosz = bytesToInt $ BS.take 4 key
                         algo = (BS.take algosz . BS.drop 4) key
@@ -49,7 +49,7 @@ decodePubKey text = let Right key =  keybin text
                         get_e = BS.take esize . BS.drop (4 + algosz + 4)
                         get_n = BS.take nsize . BS.drop (4 + algosz + 4 + esize + 4)
                         in
-                        ((nsize, esize), bytesToInt $ get_e key, bytesToInteger $ get_n key)
+                        ((nsize, esize), toInteger . bytesToInt $ get_e key, bytesToInteger $ get_n key)
                         where
                             bytesToInt :: BS.ByteString -> Int
                             bytesToInt = (foldl' (\z n -> (z * 256) + fromIntegral n) 0) . BS.unpack
@@ -65,11 +65,12 @@ encryptFile iv cc = fmap runencrypt cc <*> fmap fst iv
 main :: IO()
 main = do
     sfname' <- sfname
-    fmap (V.map decodePubKey) (getKeys =<< username) >>= kwriter sfname' . show >>
-        encryptFile initVec' ciphercontext <*> sourcefile >>= bwriter sfname'
+    fmap (V.map decodePubKey) (getKeys =<< username) >>=
+        V.mapM (\k -> encryptKey k $ (fst initVec, fst ciphercontext)) >>=
+            kwriter sfname' . show >>
+                encryptFile initVec ciphercontext <*> sourcefile >>= bwriter sfname'
     where
-    initVec = cprgGenerate 16 <$> RA.makeSystem
-    initVec' = over _1 aesIV_ initVec
+    initVec = (over _1 aesIV_ . cprgGenerate 16) <$> RA.makeSystem
     ciphercontext = initAES . fst <$> (cprgGenerate 32 . snd) <$> initVec
     username = head <$> getArgs
     sfname = (head . tail) <$> getArgs
